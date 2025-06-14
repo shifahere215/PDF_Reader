@@ -1,0 +1,6 @@
+.env
+chroma_*
+chroma
+.DS_Store
+echo "venv/" >> .gitignore
+venv/
