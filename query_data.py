@@ -1,13 +1,11 @@
+
 # import argparse
 # import os
 # from dotenv import load_dotenv
-# # from langchain_community.vectorstores import Chroma
-# # from langchain_community.embeddings import HuggingFaceEmbeddings
 # from langchain_chroma import Chroma
 # from langchain_huggingface import HuggingFaceEmbeddings
 # from langchain.prompts import ChatPromptTemplate
-# from transformers import pipeline
-# from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+# from transformers import AutoTokenizer, AutoModelForCausalLM
 # import torch
 
 # # Load environment variables
@@ -15,24 +13,6 @@
 
 # CHROMA_PATH = "PDF_Reader/chroma"
 # HUGGINGFACEHUB_API_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
-
-# # PROMPT_TEMPLATE = """
-# # Answer the question based only on the following context:
-
-# # {context}
-
-# # ---
-
-# # Answer the question based on the above context: {question}
-# # """
-
-# # PROMPT_TEMPLATE = """Answer the following question using only the information from the context.
-
-# # Context:
-# # {context}
-
-# # Question: {question}
-# # Answer:"""
 
 # PROMPT_TEMPLATE = """### Instruction:
 # Answer the following question using only the information from the context.
@@ -44,9 +24,6 @@
 # {question}
 
 # ### Response:"""
-
-
-
 
 # def main():
 #     parser = argparse.ArgumentParser()
@@ -73,26 +50,21 @@
 #     print(prompt)
 
 #     try:
-#         # Use HuggingFace pipeline
-#         # pipe = pipeline(
-#         #     "text2text-generation",
-#         #     model="google/flan-t5-xl",
-#         #     device_map="auto",
-#         #     model_kwargs={"torch_dtype": "float16"},
-#         #     token=HUGGINGFACEHUB_API_TOKEN,
-#         #     trust_remote_code=True,
-#         # )
-
-#         # response_text = pipe(prompt, max_new_tokens=100)[0]["generated_text"]
-#         # model_name = "google/flan-t5-xl"
 #         model_name = "mistralai/Mistral-7B-Instruct-v0.1"
-#         tokenizer = AutoTokenizer.from_pretrained(model_name)
-#         model = AutoModelForSeq2SeqLM.from_pretrained(
-#             model_name, device_map="auto", torch_dtype=torch.float16
+
+#         # HuggingFace auth setup
+#         os.environ["HF_TOKEN"] = HUGGINGFACEHUB_API_TOKEN
+
+#         tokenizer = AutoTokenizer.from_pretrained(model_name, token=HUGGINGFACEHUB_API_TOKEN)
+#         model = AutoModelForCausalLM.from_pretrained(
+#             model_name,
+#             device_map="auto",
+#             torch_dtype=torch.float16,
+#             token=HUGGINGFACEHUB_API_TOKEN,
 #         )
 
-#         inputs = tokenizer(prompt, return_tensors="pt").to("mps")  # or "cpu" if MPS fails
-#         outputs = model.generate(**inputs, max_new_tokens=100)
+#         inputs = tokenizer(prompt, return_tensors="pt").to("mps")  # or "cpu"
+#         outputs = model.generate(**inputs, max_new_tokens=150)
 #         response_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 #         print(f"\n🧠 Response:\n{response_text}")
@@ -106,6 +78,7 @@
 
 # if __name__ == "__main__":
 #     main()
+
 
 import argparse
 import os
@@ -122,8 +95,12 @@ load_dotenv(dotenv_path="PDF_Reader/.env")
 CHROMA_PATH = "PDF_Reader/chroma"
 HUGGINGFACEHUB_API_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 
+# Number of top documents to fetch (extended context)
+CONTEXT_CHUNKS = 3
+
+# Chain-of-thought prompt
 PROMPT_TEMPLATE = """### Instruction:
-Answer the following question using only the information from the context.
+Use the context to answer the question. Think step-by-step and explain clearly.
 
 ### Context:
 {context}
@@ -143,13 +120,15 @@ def main():
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     db = Chroma(persist_directory=CHROMA_PATH, embedding_function=embeddings)
 
-    results = db.similarity_search_with_relevance_scores(query_text, k=1)
+    # Search for multiple top documents
+    results = db.similarity_search_with_relevance_scores(query_text, k=CONTEXT_CHUNKS)
     filtered_results = [(doc, score) for doc, score in results if score >= 0.0]
 
     if not filtered_results:
         print("❌ No relevant results found.")
         return
 
+    # Combine context chunks
     context_text = "\n\n---\n\n".join([doc.page_content for doc, _ in filtered_results])
     prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
     prompt = prompt_template.format(context=context_text, question=query_text)
@@ -160,9 +139,6 @@ def main():
     try:
         model_name = "mistralai/Mistral-7B-Instruct-v0.1"
 
-        # HuggingFace auth setup
-        os.environ["HF_TOKEN"] = HUGGINGFACEHUB_API_TOKEN
-
         tokenizer = AutoTokenizer.from_pretrained(model_name, token=HUGGINGFACEHUB_API_TOKEN)
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
@@ -171,8 +147,8 @@ def main():
             token=HUGGINGFACEHUB_API_TOKEN,
         )
 
-        inputs = tokenizer(prompt, return_tensors="pt").to("mps")  # or "cpu"
-        outputs = model.generate(**inputs, max_new_tokens=150)
+        inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=4096).to("mps")
+        outputs = model.generate(**inputs, max_new_tokens=250)
         response_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
         print(f"\n🧠 Response:\n{response_text}")
@@ -186,5 +162,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
